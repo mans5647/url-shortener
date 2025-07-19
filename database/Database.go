@@ -1,12 +1,14 @@
 package database
 
-import (
+import 
+	(
 	"errors"
+	"fmt"
 	"url-shortener/models"
 	"url-shortener/utils"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-)
+	)
 
 var conn * gorm.DB = nil
 
@@ -20,7 +22,6 @@ func OpenPostgresConnection(dsn string) bool {
 		return false
 	}
 
-	/* assign pointer to connection */
 	conn = newConn
 	return true
 }
@@ -40,15 +41,17 @@ func AddNewShortUrl(urlForm * models.OldFormUrl) (*models.NewFormUrl, error) {
 
 	maxId := 0
 	shortUrl := &models.NewFormUrl{}
+	cfg := utils.GetGlobalConfig()
 	// 1. get max id
 
-	
+
 	conn.Table("urls").Select("max(urls.id)").Scan(&maxId)
 	
 	code := utils.GenerateShortCode(maxId, urlForm.Url)
 
 	shortUrl.Code = code
 	shortUrl.RealUrl = urlForm.Url
+	shortUrl.ShortUrl = fmt.Sprintf("http://localhost:%d/%s",cfg.ServicePort, code)
 
 	// 3. add record to database
 

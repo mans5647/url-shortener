@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"url-shortener/handlers"
 	"url-shortener/database"
+	"url-shortener/handlers"
+	"url-shortener/utils"
 )
 
 
 func main() {
+
 
 	if len(os.Args) == 1 {
 		log.Fatalln("Not enough arguments")
@@ -30,6 +32,8 @@ func main() {
 	if !database.AutoMigrateTables() {
 		log.Fatal("Failed to migrate tables!")
 	}
+	
+	utils.InitializeGlobalConfig(servicePort, "localhost")
 
 	// handlers
 	http.HandleFunc("/shorten", handlers.ShortenUrlHandler)
