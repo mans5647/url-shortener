@@ -1,4 +1,3 @@
-Вот обновлённый `README.md`, с учётом структуры `models.NewFormUrl` и `models.OldFormUrl`:
 
 ---
 
@@ -135,11 +134,5 @@ curl -X POST http://localhost:8080/shorten \
 ```bash
 curl -X DELETE http://localhost:8080/clear
 ```
-
----
-
-## 📄 Лицензия
-
-MIT License © 2025
 
 ---
