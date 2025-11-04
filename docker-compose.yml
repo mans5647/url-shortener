@@ -1,0 +1,13 @@
+services:
+  front:
+    build: ./frontend
+    ports:
+      - "8090:80"
+    depends_on:
+      - back
+    
+  back:
+    env_file: .env
+    build: .
+    ports:
+      - "8080:8080"
