@@ -1,140 +1,99 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"url-shortener/database"
-	"url-shortener/models"
+	"url-shortener/models/url"
+
+	"github.com/labstack/echo/v4"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-const (
-	jsonContentType = "application/json"	
-	htmlContentType = "text/html"
-)
 
+type ShortenerHandler struct {
+	storage database.Storage
+}
 
-func toJson(obj any) (string, error) {
-	bytes, err := json.Marshal(obj)
+func NewShortenerHandler(storage database.Storage) * ShortenerHandler {
+	return &ShortenerHandler{
+		storage: storage,
+	}
+}
+
+func NewMemorySequenceShortener() * ShortenerHandler {
+	return &ShortenerHandler{
+		storage: database.NewMemoryStorage(),
+	}
+}
+
+func NewDatabaseSequenceShortener(dbName, collName, host string, port int) (* ShortenerHandler, error) {
+
+	store, err := database.NewMongoStorage(dbName, collName, host, port)
 
 	if err != nil {
-		return "", errors.New("failed to convert to json")
+		return nil, err
 	}
 
-	return string(bytes), nil
+	return &ShortenerHandler{
+		storage: store,
+	}, nil
 }
 
-func fromJson(bytes []byte, obj any) error {
-	return json.Unmarshal(bytes, obj)
-} 
+func (handler * ShortenerHandler) HandleShorten(c echo.Context) error {
 
-func doResponse(status int, body string, contentType string, w http.ResponseWriter) {
-	
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(status)
-	w.Write([]byte(body))
-}
+	oldUrl := url.PlainUrl{}
 
-func responseAsJson(status int, body string, w http.ResponseWriter) {
-
-	doResponse(status, body, jsonContentType, w)
-}
-
-func responseAsHTML(status int, body string, w http.ResponseWriter) {
-
-	doResponse(status, body, htmlContentType, w)
-}
-
-/*
-	shortens url using 
-*/
-func ShortenUrlHandler(w http.ResponseWriter, r * http.Request) {
-	
-	var requestBody []byte
-	var urlToConvert models.OldFormUrl
-
-	MimeChecker := func (val string) bool {
-		return strings.HasPrefix(val, jsonContentType)
+	if !strings.HasPrefix(c.Request().Header.Get("Content-Type"), "application/json") {
+		return c.String(http.StatusBadRequest, "invalid content type")
 	}
 
-
-	if r.Method != http.MethodPost {
-		responseAsHTML(http.StatusMethodNotAllowed, "<h1>Method is not allowed!</h1>", w)
-		return
+	if err := c.Bind(&oldUrl); err != nil {
+		return c.String(http.StatusBadRequest, "body error")
 	}
 	
-	// check if body is json type
-
-	if value := r.Header.Get("Content-Type"); !MimeChecker(value) {
-		responseAsHTML(http.StatusBadRequest, "<h1>Invalid request</h1>", w)
-		return
+	if len(oldUrl.Url) == 0 {
+		return c.String(http.StatusBadRequest, "empty url")
 	}
 
-	requestBody, err := io.ReadAll(r.Body)
+
+	nextId := handler.storage.GenerateId(c.Request().Context())
+	newUrl, err := url.Shorten(c.Request().Context(), nextId, url.DefaultCutSize, &oldUrl)
 
 	if err != nil {
-		responseAsHTML(http.StatusBadRequest, "<h1>Read body failed</h1>", w)
-		return
+		return c.String(http.StatusInternalServerError, "failed to generate url")
 	}
 
-	
+	errInsert := handler.storage.Store(c.Request().Context(), newUrl)
 
-	if fromJson(requestBody, &urlToConvert) != nil {
-		responseAsHTML(http.StatusBadRequest, "<h1>Failed to process request body</h1>", w)
-		return
+	if errInsert != nil {
+		c.JSON(http.StatusInternalServerError, struct{
+			description string
+			errorCode int
+		}{
+			description: "insert error",
+			errorCode: -1,
+		})
 	}
 
-	shortenedUrl, err := database.AddNewShortUrl(&urlToConvert)
-	
-	if err != nil {
-		responseAsHTML(http.StatusInternalServerError, "<h1>Failed to short url!</h1>", w)
-		return
-	}
-
-	json, _ := toJson(shortenedUrl)
-	responseAsJson(http.StatusOK, json, w)
-	r.Body.Close()
+	c.Response().Header().Set("Access-Control-Allow-Origin", c.Request().Header.Get("Origin"))
+	c.Response().Header().Set("Access-Control-Allow-Methods", "POST")
+	c.Response().Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	return c.JSON(http.StatusOK, newUrl)
 }
 
-/*
-	Handles short url redirection by using "Location" header in response
 
-	for example:
-	http://localhost:8080/1Hg redirects 
-	to https://some.real.long.url//making-things-right
+func (handler * ShortenerHandler) HandleRedirect(c echo.Context) error {
 
-*/
-func RedirectByLinkCodeHandler(w http.ResponseWriter, r * http.Request) {
+	code := c.Param("code")
 
-	code := r.PathValue("code")
-	realUrl, err := database.FindRealUrlByCode(code)
-	if err != nil {
-		responseAsHTML(http.StatusInternalServerError, "could't find short url", w)
-		return
+	uri, err := handler.storage.FindByCode(c.Request().Context(), code)
+
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return c.String(http.StatusNotFound, "not found")
 	}
 
-	w.Header().Add("Location", realUrl)
-	doResponse(http.StatusFound, "", htmlContentType, w)
-}
-
-/*
-	removes all url records from table in database
-*/
-func DeleteAllUrlsHandler(w http.ResponseWriter, r * http.Request) {
-
-	if r.Method != http.MethodDelete {
-		responseAsHTML(http.StatusMethodNotAllowed, "", w)
-		return
-	}
-
-	if database.DeleteAllUrls() == nil {
-		responseAsHTML(http.StatusNoContent, "", w)
-		return
-	}
-
-
-	responseAsHTML(http.StatusInternalServerError, "", w)
+	return c.Redirect(http.StatusMovedPermanently, uri.Url)
 
 }

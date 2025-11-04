@@ -3,43 +3,40 @@ package main
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strconv"
-	"url-shortener/database"
 	"url-shortener/handlers"
-	"url-shortener/utils"
+	"github.com/joho/godotenv"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
 
 func main() {
 
-
-	if len(os.Args) == 1 {
-		log.Fatalln("Not enough arguments")
+	if err := godotenv.Load(); err != nil {
+		log.Fatal("Failed to load .env file")
 	}
 
-	servicePort, err := strconv.Atoi(os.Args[1])
+	port := os.Getenv("port")
 
+	mongoHost := os.Getenv("mongo_host")
+	mongoPort, _ := strconv.Atoi(os.Getenv("mongo_port"))
+	mongoDb := os.Getenv("mongo_db")
+	mongoColl := os.Getenv("mongo_collection")
+
+	handler, err := handlers.NewDatabaseSequenceShortener(mongoDb, mongoColl, mongoHost, mongoPort)
+	
 	if err != nil {
-		log.Fatalln("Invalid value for port number")
-	}
-
-	if !database.OpenPostgresConnection(database.DefaultDsn) {
-		log.Fatal("Failed to open db connection!")
-	}
-
-	if !database.AutoMigrateTables() {
-		log.Fatal("Failed to migrate tables!")
+		log.Fatal("Failed to create handler: %w", err)
 	}
 	
-	utils.InitializeGlobalConfig(servicePort, "localhost")
+	e := echo.New()
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+	
+	e.POST("/api/v1/shorten", handler.HandleShorten)
+	e.GET("/api/v1/redirect/:code", handler.HandleRedirect)
 
-	// handlers
-	http.HandleFunc("/shorten", handlers.ShortenUrlHandler)
-	http.HandleFunc("/{code}", handlers.RedirectByLinkCodeHandler)
-	http.HandleFunc("/clear", handlers.DeleteAllUrlsHandler)
-
-	log.Printf("Starting url shortening service at http://localhost:%d", servicePort)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", servicePort), nil))
+	e.Start(fmt.Sprintf(":%s", port))
 }
